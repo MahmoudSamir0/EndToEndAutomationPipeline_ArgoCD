@@ -82,7 +82,7 @@ This project is dedicated to establishing a robust DevOps pipeline that emphasiz
        - Jenkins commits and pushes the changes back to the private Git repository on GitHub.
 
    - ArgoCD continuously monitors the private Git repository for changes in Kubernetes manifests.
-   - Upon detecting changes, ArgoCD automatically syncs the manifests with the desired state, deploying the updated Java application to the Amazon EKS cluster.
+   - Upon detecting changes, ArgoCD automatically syncs the manifests with the desired state, deploying the updated Java application to the  AKS cluster.
 
 8. **Slack Notifications:**
    - **Success Notification:** If the pipeline completes successfully, send a **Slack notification** to the DevOps engineer indicating that the entire pipeline has succeeded.
