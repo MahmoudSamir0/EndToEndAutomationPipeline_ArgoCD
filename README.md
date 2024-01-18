@@ -1153,3 +1153,8 @@ grafana
 
 ![pipeline-final10](Project-documentation/Grafana-7.png)
 
+# Author: Mahmoud samir
+## Contact Information
+
+  For inquiries, please contact [Mahmoud samir](mailto:mahmoud_samir47@yahoo.com).
+
