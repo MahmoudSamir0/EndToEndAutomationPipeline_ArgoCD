@@ -1,0 +1,23 @@
+pipeline {
+    agent any
+    environment {
+        APP_ID = credentials('AZURE_APP_ID')     
+        // az ad sp create-for-rbac --name <your-app-name> --role contributor --scopes /subscriptions/<subscription-id>/resourceGroups/<resource-group-name>
+
+        PASSWORD = credentials('AZURE_PASSWORD')
+        TENANT_ID = credentials('AZURE_TENANT_ID')
+    }
+    stages {
+        stage('Run Terraform') {
+            steps {
+                script {
+                    sh "az login --service-principal -u ${APP_ID} -p ${PASSWORD} --tenant ${TENANT_ID}"
+                    dir('infrastructure') {
+                        sh 'terraform init'
+                        sh 'terraform apply -auto-approve'
+                    }
+                }
+            }
+        }
+    }
+}

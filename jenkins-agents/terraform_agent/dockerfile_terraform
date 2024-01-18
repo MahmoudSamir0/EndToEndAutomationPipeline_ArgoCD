@@ -1,0 +1,41 @@
+FROM ubuntu
+USER root
+# create user
+RUN useradd -m jenkins
+RUN mkdir -p /var/jenkins_home
+RUN chown -R jenkins:jenkins /var/jenkins_home
+WORKDIR /home/jenkins
+RUN apt update && apt dist-upgrade -y
+# Install required packages
+RUN apt install -y \
+    git \
+    apt-transport-https \
+    curl \
+    software-properties-common \
+    unzip \
+    openssh-server openssh-client \
+    vim \
+    ca-certificates \
+    gnupg \
+    lsb-release
+# Add the HashiCorp GPG key
+RUN curl -fsSL https://apt.releases.hashicorp.com/gpg | apt-key add -
+
+# Add the HashiCorp official Debian repository
+RUN add-apt-repository "deb [arch=amd64] https://apt.releases.hashicorp.com $(lsb_release -cs) main"
+
+# Install Terraform
+RUN apt-get update && \
+    apt-get install -y terraform
+# Install AZURE CLI
+RUN curl -sL https://aka.ms/InstallAzureCLIDeb |  bash
+# install java
+RUN apt install -y openjdk-17-jdk
+# expose port
+# Cleanup
+RUN apt-get clean && \
+    rm -rf /var/lib/apt/lists/*
+EXPOSE 22
+# running process
+ENTRYPOINT ["tail"]
+CMD ["-f", "/dev/null"]

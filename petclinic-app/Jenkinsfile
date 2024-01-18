@@ -1,0 +1,199 @@
+pipeline {
+    agent any
+
+    environment {
+        NAME = "petclinic"
+        VERSION = "1.${env.BUILD_ID}"
+        USER_EMAIL = credentials('USER_EMAIL')
+        ACR_REPOSITORY = credentials('ACR_REPOSITORY')
+        ACR_REPO = "${env.ACR_REPOSITORY}.azurecr.io/${env.NAME}"
+        IMAGE_TAG = "1.${env.BUILD_ID}"
+        TENANT_ID = credentials('TENANT_ID')
+        GIT_USERNAME = credentials('GIT_USERNAME')
+        GIT_PASSWORD = credentials('GIT_PASSWORD')
+        GIT_ARGOCD_URL = 'https://github.com/MahmoudSamir0/argocd-petclinic.git'
+        AZURE_SERVICE_PRINCIPAL_ID = credentials('AZURE_SERVICE_PRINCIPAL_ID')
+        AZURE_SERVICE_PRINCIPAL_SECRET = credentials('AZURE_SERVICE_PRINCIPAL_SECRET')
+        newacr="containerregistrymah1.azurecr.io/${env.NAME}"
+
+    }
+
+    stages {
+        stage('pipeline start') {
+            steps {
+                slackSend(channel: "#jenkins-alarm", color: 'good', message: "PIPELINE STARTED: Job '${env.JOB_NAME} [${env.BUILD_NUMBER}]' BRANCH NAME (${env.BRANCH_NAME})")
+            }
+        }
+
+        
+        stage('Build Artifact') {
+            steps {
+                sh "mvn clean -DskipTest=true"
+            }
+        }
+
+        stage('Unit Tests') {
+            steps {
+                sh "mvn test"
+            }
+        }
+
+        stage("Integration Testing") {
+            steps {
+                sh 'mvn verify -DskipUnitTests'
+            }
+        }
+       
+ stage('SonarQube Analysis'){
+
+            steps {
+                    script {
+                   def repositoryUrl = scm.userRemoteConfigs[0].getUrl()
+                    def GIT_REPO_NAME = repositoryUrl.tokenize('/').last().split("\\.")[0]
+                    sh "sed -i s#{{repo_name}}#${GIT_REPO_NAME}# sonar-project.properties"
+
+                    }
+                withSonarQubeEnv('sonarqube') {
+                    
+
+                sh 'mvn clean package sonar:sonar'
+            }
+            }
+        }
+
+        stage('Quality Gate Condition'){
+
+            steps {
+                sleep(10)
+                timeout(time: 5, unit: 'MINUTES'){
+                waitForQualityGate abortPipeline: true
+                            script {
+                    def qualitygate = waitForQualityGate()
+                    if (qualitygate.status != "OK") {
+                        echo 'Slack Notifications for quality gate failure'
+                        
+                        slackSend (channel: '#jenkins-alarm',
+                        color:'danger',
+                        message: "* sonarqube Result :* Job ${env.JOB_NAME} build ${env.BUILD_NUMBER}   BRANCH NAME ${env.BRANCH_NAME}\nquality gate failure: ${qualitygate.status} ")
+                        
+                        error "Pipeline aborted due to a quality gate failure: ${qualitygate.status}"
+                    }
+                    else
+                    {
+                       echo 'Slack Notifications for quality gate sucsess '
+                        slackSend (channel: '#jenkins-alarm',
+                        color:'good',
+                        message: "* sonarqube Result :* Job ${env.JOB_NAME} build ${env.BUILD_NUMBER}   BRANCH NAME ${env.BRANCH_NAME}\nquality gate result : ${qualitygate.status} ")
+        
+                    }
+                    
+                }
+                }
+
+                }
+                }
+
+
+
+        stage('Maven Build') {
+            steps {
+                sh "mvn clean install"
+            }
+        }
+
+        stage('Build and Push Image to ACR') {
+            steps {
+                sh 'az login --service-principal -u $AZURE_SERVICE_PRINCIPAL_ID -p $AZURE_SERVICE_PRINCIPAL_SECRET -t $TENANT_ID'
+                sh 'az acr build -t $NAME:${IMAGE_TAG} -r $ACR_REPOSITORY .'
+            }
+        }
+
+stage('pull argocd manifest') {
+    steps {
+        script {
+            deleteDir()
+            def determineRepoName = { String repositoryUrl ->
+                repositoryUrl.tokenize('/').last().split("\\.")[0]
+            }
+            def repo_name = determineRepoName(env.GIT_ARGOCD_URL)
+            
+            dir("${repo_name}") {
+                git branch: 'main', credentialsId: 'github_jenkins', url: env.GIT_ARGOCD_URL
+            }
+        }
+    }
+}
+
+            
+        stage('Update Manifest') {
+            steps {
+                script {
+                    def determineRepoName = { String repositoryUrl ->
+                        repositoryUrl.tokenize('/').last().split("\\.")[0]
+                    }
+                    def argocd_repo_name = determineRepoName(env.GIT_ARGOCD_URL)
+                    def path = sh(script: 'pwd', returnStdout: true).trim()
+                    def directoryPath = "${path}/${argocd_repo_name}"
+                    def fileName = 'petclinic.yaml'
+                    def fullFilePath = "${directoryPath}/${fileName}"
+                    echo "${path}"
+                    sh "pwd"
+                    sh "ls -l ${directoryPath}"
+                    sh "chmod +x ${fullFilePath}"
+                     sh """sed -i -E 's# ${newacr}:[^ ]*# ${newacr}:${VERSION}#g' ${fullFilePath}"""
+                    sh "cat ${fullFilePath}"
+
+                }
+            }
+        }
+
+        stage('Push changes to GITHUB') {
+            steps {
+                script {
+            def determineRepoName = { String repositoryUrl ->
+                repositoryUrl.tokenize('/').last().split("\\.")[0]
+            }
+            def repo_name_push = determineRepoName(env.GIT_ARGOCD_URL)
+             dir("${repo_name_push}"){
+                    sh "git config --global user.email '${USER_EMAIL}'"
+                    sh "git config --global user.name '${GIT_USERNAME}'"
+                    sh "git add * "
+                    sh "git commit -m 'change image to new VERSION ${VERSION}'"
+
+                    withCredentials([usernamePassword(credentialsId: 'github_jenkins', usernameVariable: 'GIT_USERNAME', passwordVariable: 'GIT_PASSWORD')]) {
+                        sh "git push https://${GIT_USERNAME}:${GIT_PASSWORD}@github.com/MahmoudSamir0/argocd-petclinic.git HEAD:main"
+                    }
+             }
+                    
+                }
+            }
+        }
+    }
+
+    post {
+        always {
+            script {
+                def pipelineTime = currentBuild.durationString
+
+                if (currentBuild.result == 'FAILURE') {
+                    echo 'Slack Notification for pipeline failure'
+                    slackSend(
+                        channel: '#jenkins-alarm',
+                        color: '#FF0000',
+                        message: "*Pipeline Failed unknown error :* Job ${env.JOB_NAME} build ${env.BUILD_NUMBER} BRANCH NAME ${env.BRANCH_NAME}\nPipeline Result: ${currentBuild.result}\nDuration: ${pipelineTime}"
+                    )
+                }
+
+
+else {
+echo 'Slack Notification for pipeline success'
+                slackSend(channel: '#jenkins-alarm',
+                           color: '#00FF00',
+                           message: "*Pipeline Succeeded:* Job ${env.JOB_NAME} build ${env.BUILD_NUMBER} BRANCH NAME ${env.BRANCH_NAME}\nPipeline Result:success\nDuration: ${pipelineTime}")
+               }
+    }
+}
+            }
+        }
+
+        
